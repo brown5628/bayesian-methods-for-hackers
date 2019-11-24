@@ -73,7 +73,7 @@ plt.title("Probability density function of an exponential random\
             variable, differeing $\lambda$ values")
 
 # %% codecell
-# 1.4.1 Example: Infewrring Behavior from Text-Message Data
+# 1.4.1 Example: Inferring Behavior from Text-Message Data
 
 figsize(12.5, 3.5)
 count_data = np.loadtxt("txtdata.csv")
@@ -87,11 +87,13 @@ plt.xlim(0, n_count_data)
 # %% codecell
 # 1.4.2 Introducing our First Hammer: PyMc
 
-import pymc as pm
+import pymc3 as pm
+import theano.tensor as tt
 
-alpha = 1.0/count_data.mean()  # Recall that count_data is the
-                               # variable that holds our text counts.
-lambda_1 = pm.Exponential("lambda_1", alpha)
-lambda_2 = pm.Exponential("lambda_2", alpha)
+with pm.Model() as model:
+    alpha = 1.0/count_data.mean()
 
-tau = pm.DiscreteUniform("tau", lower=0, upper=n_count_data)
+    lambda_1 = pm.Exponential("lambda_1", alpha)
+    lambda_2 = pm.Exponential("lambda_2", alpha)
+
+    tau = pm.DiscreteUniform("tau", lower = 0, upper=n_count_data - 1)
