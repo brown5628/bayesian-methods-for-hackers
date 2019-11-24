@@ -1,6 +1,5 @@
 # %% codecell
 # 1.2.2 Example: Librarian or Farmer?
-
 %matplotlib inline
 from IPython.core.pylabtools import figsize
 import numpy as np
@@ -97,3 +96,7 @@ with pm.Model() as model:
     lambda_2 = pm.Exponential("lambda_2", alpha)
 
     tau = pm.DiscreteUniform("tau", lower = 0, upper=n_count_data - 1)
+
+with model:
+    idx = np.arange(n_count_data)
+    lambda_ = pm.math.switch(tau > idx, lambda_1, lambda_2)
