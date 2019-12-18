@@ -1,5 +1,4 @@
-# %% codecell
-%matplotlib inline
+# %%
 import numpy as np
 import scipy.stats as stats
 from IPython.core.pylabtools import figsize
@@ -27,7 +26,7 @@ leg = plt.legend(loc = "upper left")
 leg.get_frame().set_alpha(.4)
 plt.title("Comparing objective vs. subjective priors for an unknown probability")
 
-# %% codecell
+# %%
 # Gamma
 figsize(12.5, 5)
 gamma = stats.gamma
@@ -255,4 +254,202 @@ for j,i in enumerate([100, 200, 500, 1300]):
     #plt.legend()
     plt.xlim(0, 0.5)
 
-# %% codecell
+# %% 
+figsize(11., 5)
+colors = ["#348ABD", "#A60628", "#7A68A6", "#467821"]
+
+normal = stats.norm
+x = np.linspace(-0.15, 0.15, 100)
+
+expert_prior_params = {"AAPL":(0.05, 0.03),
+                 "GOOG":(-0.03, 0.04), 
+                 "TSLA": (-0.02, 0.01), 
+                 "AMZN": (0.03, 0.02), 
+                 }
+
+for i, (name, params) in enumerate(expert_prior_params.items()):
+    plt.subplot(2, 2, i+1)
+    y = normal.pdf(x, params[0], scale = params[1])
+    #plt.plot( x, y, c = colors[i] )
+    plt.fill_between(x, 0, y, color = colors[i], linewidth=2,
+                     edgecolor = colors[i], alpha = 0.6)
+    plt.title(name + " prior")
+    plt.vlines(0, 0, y.max(), "k","--", linewidth = 0.5)
+    plt.xlim(-0.15, 0.15)
+plt.tight_layout()
+
+# %%
+import datetime
+import collections
+import ystockquote as ysq
+import pandas as pd
+
+n_observations = 100 # we will truncate the the most recent 100 days.
+
+stocks = ["AAPL", "GOOG", "TSLA", "AMZN"]
+
+enddate = "2015-04-27"
+startdate = "2012-09-01"
+
+CLOSE = 6
+
+stock_closes = pd.DataFrame()
+
+for stock in stocks:
+    x = np.array(ysq.get_historical_prices(stock, startdate, enddate))
+    stock_series = pd.Series(x[1:,CLOSE].astype(float), name=stock)
+    stock_closes[stock] = stock_series
+
+stock_closes = stock_closes[::-1]
+stock_returns = stock_closes.pct_change()[1:][-n_observations:]
+    
+dates = list(map(lambda x: datetime.datetime.strptime(x, "%Y-%m-%d"), x[1:n_observations+1,0]))
+
+# %%
+import pymc3 as pm 
+import theano.tensor as tt 
+from theano.tensor.nlinalg import matrix_inverse, diag, matrix_dot
+
+prior_mu = np.array([x[0] for x in expert_prior_params.values()])
+prior_std = np.array([x[1] for x in expert_prior_params.values()])
+
+init = stock_returns.cov() 
+
+with pm.Model() as model:
+    cov_matrix = pm.WishartBarlett("covariance", np.diag(prior_std**2), 10, testval = init)
+
+    mu = pm.Normal("returns", mu = prior_mu, sd=1, shape = 4)
+
+#%% 
+figsize(12.5, 4)
+
+cum_returns = np.cumprod(1 + stock_returns) - 1
+cum_returns.index = dates[::-1]
+cum_returns.plot()
+
+plt.legend(loc = "upper left")
+plt.title("Return space")
+plt.ylabel("Return of $1 on first date, x100%")
+
+#%%
+figsize(11.,5)
+
+for i, _stock in enumerate(stocks):
+    plt.subplot(2, 2, i + 1)
+    plt.hist(stock_returns[_stock], bins = 20), normed = True, histtype = "stepfilled", color = colors[i], alpha = .7)
+    plt.title(_stock + " returns")
+    plt.xlim(-.15, .15)
+
+plt.tight_layout()
+plt.subtitle("Histogram of daily returns", size = 14)
+
+#%% 
+with model:
+    obs = pm.MvNormal("observed returns", mu = mu, cov = cov_matrix, observed = stock_returns)
+    step = pm.NUTS() 
+    trace = pm.sample(5000, step = step)
+
+#%% 
+figsize(12.5,4)
+
+#examine the mean return first.
+mu_samples = trace["returns"]
+
+for i in range(4):
+    plt.hist(mu_samples[:,i], alpha = 0.8 - 0.05*i, bins = 30,
+             histtype="stepfilled", normed=True, 
+             label = "%s" % stock_returns.columns[i])
+
+plt.vlines(mu_samples.mean(axis=0), 0, 500, linestyle="--", linewidth = .5)
+
+plt.title("Posterior distribution of $\mu$, daily stock returns")
+plt.legend()
+
+#%%
+figsize(11.0,3)
+for i in range(4):
+    plt.subplot(2,2,i+1)
+    plt.hist(mu_samples[:,i], alpha = 0.8 - 0.05*i, bins = 30,
+             histtype="stepfilled", normed=True, color = colors[i],
+             label = "%s" % stock_returns.columns[i])
+    plt.title("%s" % stock_returns.columns[i])
+    plt.xlim(-0.15, 0.15)
+    
+plt.suptitle("Posterior distribution of daily stock returns")
+plt.tight_layout()
+
+#%%
+cov_samples = trace["covariance"]
+mean_covariance_matrix = cov_samples.mean(axis=0)
+
+def cov2corr(A):
+    """
+    covariance matrix to correlation matrix.
+    """
+    d = np.sqrt(A.diagonal())
+    A = ((A.T/d).T)/d
+    #A[ np.diag_indices(A.shape[0]) ] = np.ones( A.shape[0] )
+    return A
+
+
+plt.subplot(1,2,1)
+plt.imshow(cov2corr(mean_covariance_matrix) , interpolation="none", 
+                cmap = "hot") 
+plt.xticks(np.arange(4), stock_returns.columns)
+plt.yticks(np.arange(4), stock_returns.columns)
+plt.colorbar(orientation="vertical")
+plt.title("(mean posterior) Correlation Matrix")
+
+plt.subplot(1,2,2)
+plt.bar(np.arange(4), np.sqrt(np.diag(mean_covariance_matrix)),
+        color = "#348ABD", alpha = 0.7)
+plt.xticks(np.arange(4) + 0.5, stock_returns.columns);
+plt.title("(mean posterior) standard deviations of daily stock returns")
+
+plt.tight_layout()
+
+#%%
+figsize(12.5, 5)
+
+x = np.linspace(0.000, 1, 150)
+y = np.linspace(1.0, 1.0, 150)
+lines = plt.plot(x, y, color = "#A60628", lw = 3)
+plt.fill_between(x, 0, y, alpha = .2, color = lines[0].get_color())
+plt.autoscale(tight = True)
+plt.ylim(0, 2)
+
+# %%
+figsize(12.5, 5)
+
+psi = np.linspace(-10, 10, 150)
+y = np.exp(psi) / (1 + np.exp(psi))**2 
+lines = plt.plot(psi, y, color="#A60628", lw = 3)
+plt.fill_between(psi, 0, y, alpha = .2, color = lines[0].get_color())
+plt.autoscale(tight = True)
+plt.ylim(0, 1)
+
+# %%
+figsize(12.5, 15)
+
+p = 0.6
+beta1_params = np.array([1.,1.])
+beta2_params = np.array([2,10])
+beta = stats.beta
+
+x = np.linspace(0.00, 1, 125)
+data = stats.bernoulli.rvs(p, size=500)
+
+plt.figure()
+for i,N in enumerate([0,4,8, 32,64, 128, 500]):
+    s = data[:N].sum() 
+    plt.subplot(8,1,i+1)
+    params1 = beta1_params + np.array([s, N-s])
+    params2 = beta2_params + np.array([s, N-s])
+    y1,y2 = beta.pdf(x, *params1), beta.pdf( x, *params2)
+    plt.plot(x,y1, label = r"flat prior", lw =3)
+    plt.plot(x, y2, label = "biased prior", lw= 3)
+    plt.fill_between(x, 0, y1, color ="#348ABD", alpha = 0.15) 
+    plt.fill_between(x, 0, y2, color ="#A60628", alpha = 0.15) 
+    plt.legend(title = "N=%d" % N)
+    plt.vlines(p, 0.0, 7.5, linestyles = "--", linewidth=1)
+
