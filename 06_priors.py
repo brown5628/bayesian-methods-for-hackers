@@ -254,3 +254,5 @@ for j,i in enumerate([100, 200, 500, 1300]):
     plot_priors(bayesian_strat, hidden_prob, lw = 2, alpha = 0.0, plt_vlines=False)
     #plt.legend()
     plt.xlim(0, 0.5)
+
+# %% codecell
